@@ -1,0 +1,492 @@
+<html>
+<head>
+  <script src="js/jquery-latest.min.js"
+        type="text/javascript"></script>
+  <script type="text/javascript" src="js/jquery.tablesorter.min.js"></script>
+  <link rel="stylesheet" href="//code.jquery.com/ui/1.11.4/themes/smoothness/jquery-ui.css">
+  <link rel="stylesheet" href="css/budget.css">
+
+  <script src="//code.jquery.com/ui/1.11.4/jquery-ui.js"></script>
+
+</head>
+<script>
+
+/* 
+ * Globals
+ */
+var _categories;
+var _catTotals;
+var _subcategories={};
+var _subcatFull;
+
+
+
+function setupPaycheckPage(){
+    $.each (_categories,function(){
+        var cat = this;
+	$.each(_subcategories[cat],function(){
+           var subcat = this;
+	   $("#paycheckPage").append("<label>"+subcat+"</label>");
+	});
+
+    });
+
+}
+
+
+/*
+ * Budget Change function
+ */
+function changeInput(){
+   var row= $(this).closest("tr");
+   var other=null;
+   if ( $(this).val() == "")
+      return;
+
+   if( $(this).hasClass("amount")){
+       other = $(row).find(".percentage"); 
+   }else if ( $(this).hasClass("percentage")){
+       other = $(row).find(".amount"); 
+   }
+   // can only have percentage or amount
+   if ( $(other).val() != "" && $(other).val()!= "0"){
+      $(other).val("0");
+   }
+
+   if ( $(this).val() != ""){
+     $(this).closest("tr").addClass("changed");
+   }else{
+     $(this).closest("tr").removeClass("changed");
+   }
+} 
+
+function budgetChange(){
+   changeInput.call(this);
+   var amtTot = 0;
+   var percTot = 0;
+   $.each($("#budgetMain").find("tr"), function(){
+       var perc = $(this).find(".percentage").val();
+       var amt = $(this).find(".amount").val();
+       if( $(this).find(".subcat").html() == "Tithes")
+            return true;
+       if ( perc != "")
+           percTot+= parseFloat(perc);
+       if ( amt != "")
+          amtTot += parseFloat(amt);
+   });
+     $("#budgetAmtTotal").val(amtTot);
+     $("#budgetPercTotal").val(percTot);
+     if(percTot > 100)
+       $("#budgetPercTotal").addClass("red");
+     else
+       $("#budgetPercTotal").removeClass("red");
+       
+}
+
+function paycheckChange(){
+   changeInput.call(this);
+   var tot = 0;
+   $.each($("#paycheckMain").find(".changed").find("input"), function(){
+      var amt = $(this).val();
+      if(amt != ""){
+        tot += parseFloat(amt);
+      }
+   });
+   $("#paycheckTotal").val($("#paycheckIncome").val() - tot);
+   if (  $("#paycheckTotal").val() < 0)
+        $("#paycheckTotal").addClass("red");
+   else
+        $("#paycheckTotal").removeClass("red");
+}
+
+function transactionChange(){
+     var month= $("#transactionMonth").val();
+     $("#transactionMain").empty();
+     $.ajax({ type: "POST"
+        , url: "php/getTransactions.php"
+        , data: {"month": month}
+        , success: function(data){
+             if(data.length > 0){
+                var table = '<table class="sortable" id="transactionTable"><thead> <tr><th>Date</th><th>Account</th><th>Change</th><th>Total</th></tr><thead></table>';
+                var body = '<tbody></tbody>';
+                var tmp = data.split("\n");
+                tmp = tmp.slice(0,tmp.length-1);
+                $.each(tmp,function(){
+                    var o = JSON.parse(this);
+                    var row = '<tr></tr>';
+                    row = $(row).append('<td>'+o.Date+'</td>');
+                    row = $(row).append('<td>'+o.Account+'</td>');
+                    row = $(row).append('<td>'+o.Change+'</td>');
+                    row = $(row).append('<td>'+o.Total+'</td>');
+                    body = $(body).append(row);  
+                });
+                table = $(table).append(body);
+                $("#transactionMain").append(table);
+                $("#transactionTable").tablesorter();
+             }else
+                $("#transactionMain").append("<p>No Results Found</p>");
+          }
+     });
+}
+
+/*
+ *  Save Buttons
+ */
+function budgetSave(){
+    var changed = $("#budgetMain").find(".changed");
+    var statement="";
+    $.each(changed,function(){
+        var subCat = $(this).find(".subcat");
+        var amount= $(this).find(".amount").val();
+        var percent= $(this).find(".percentage").val();
+        if ( amount == "")
+            amount = "0";
+        if (percent == "")
+            percent = "0";  
+      
+        statement+="update subcategories set amount="+amount+", percentage="+percent+" where name=\""+$(subCat).html()+"\";";
+        $(this).removeClass("changed");
+    }); 
+        $.ajax({type: "POST"
+               ,url: "php/updateSubCategories.php"
+               ,data:{statement:statement}
+               ,success: function(data){
+                   refreshSubcategories();
+                }
+         });    
+        console.log(statement);
+}
+
+function paycheckEnter(){
+     var inc = parseFloat($("#paycheckIncome").val());
+     var total = inc;
+     var poorFlag = 0;
+
+     //Handle Tithing First
+     $("#paycheck-Tithes-amount").val(Math.floor(inc*10)/100);
+     changeInput.call($("#paycheck-Tithes-amount"));
+            
+         
+     total -= Math.floor(inc*10)/100;
+     inc -= Math.floor(inc*10)/100;
+     
+     // Handle Standard amounts
+     $.each(_subcatFullPriority, function(){
+         var sub = this;
+         var amt = sub.amt;
+         var id = sub.name.replace(/[\/'\(\) ]/g,"_");
+         console.log(id);
+         
+         if (sub.name == "Tithes")
+            return true;         
+
+         if (amt != "" && amt != "0"){
+
+           if ((inc -amt) <0){
+              alert("Not enough Money");
+              poorFlag =1;
+              return false;
+           }
+           inc -= amt;
+           total -= amt;
+           $("#paycheck-"+id+"-amount").val(amt);          
+           changeInput.call($("#paycheck-"+id+"-amount"));
+ 
+         }
+     });
+     if ( poorFlag == 1){
+        $("#paycheckTotal").val(total);
+        return;
+     } 
+     if( total > 0 && poorFlag != 1){    
+        //Now Handle Percentages
+        $.each(_subcatFullPriority,function(){
+            var sub = this;
+            var perc = sub.perc;
+            var id = sub.name.replace(/[\/'\(\) ]/g,"_");
+
+            if (sub.name == "Tithes")
+               return true;         
+
+            if ( perc != "" && perc != "0"){
+               total -= Math.floor(inc * perc) / 100.0;
+               $("#paycheck-"+id+"-amount").val(Math.floor(inc*perc)/100.0);          
+               changeInput.call($("#paycheck-"+id+"-amount"));
+            }        
+
+        });
+     }
+     $("#paycheckTotal").val(total);
+
+}
+function paycheckSave(){
+    var changed = $("#paycheckMain").find(".changed");
+    var statement="";
+    $.each(changed,function(){
+        var subCat = $(this).find(".subcat");
+        var amount= $(this).find(".amount").val();
+        if ( amount != "" && amount != "0" && amount != 0){
+      
+           statement+="update subcategories set total=round(total+"+amount+",2) where name=\""+$(subCat).html()+"\";";
+           $(this).removeClass("changed");
+        }
+    }); 
+        $.ajax({type: "POST"
+               ,url: "php/updateSubCategories.php"
+               ,data:{statement:statement}
+               ,success: function(data){
+                   refreshSubcategories();
+                }
+         });    
+        console.log(statement);
+       
+
+}
+
+/*
+ * Refresh Functions
+ */
+function refreshCategories(){
+   $.ajax({ type: "POST"
+          , url: "php/getCategoriesTotals.php"
+          , success: function(data){
+              _catTotals = data.split("\n");
+	      _catTotals = _catTotals.slice(0,_catTotals.length -1);
+              _catTotals = _catTotals.map(function(obj){return JSON.parse(obj);});
+	      refreshSummaryPage();
+	    }
+   });
+
+
+}
+
+function refreshSubcategories(){
+   $.ajax({ type: "POST"
+           , url: "php/getSubcategoriesFull.php"
+	           , success: function(data){
+
+                      _subcatFull = data.split("\n");               
+		      _subcatFull = _subcatFull.slice(0,_subcatFull.length -1);
+		      _subcatFull = _subcatFull.map(function(obj){
+		                                     return JSON.parse(obj);
+		                                });
+		      refreshBudgetPage();
+                      refreshPaycheckPage();
+                      refreshCategories();              
+		  }
+	 });
+   $.ajax({ type: "POST"
+         , url: "php/getSubcategoriesFullPriority.php"
+                 , success: function(data){
+                    _subcatFullPriority = data.split("\n");
+                    _subcatFullPriority = _subcatFullPriority.slice(0,_subcatFullPriority.length -1);
+                    _subcatFullPriority = _subcatFullPriority.map(function(obj){
+                                  return JSON.parse(obj);
+                                   });
+
+		    refreshBudgetPage();
+                    refreshPaycheckPage();
+                    refreshCategories();
+                }
+       });
+
+
+}
+
+/*
+ * Summary Page Setup
+ */
+function refreshSummaryPage(){
+    $("#summaryPage").empty();
+    var table = '<table><tr><th>Account</th><th>$</th></tr></table>';
+    var total = 0;
+    $.each(_catTotals,function(){
+        var cat = this;
+        total += parseFloat(cat.total);
+	var tmp= '<tr></tr>';
+	tmp = $(tmp).load("templates/summaryCategoryTemplateNew.html",
+	                   function(){
+                               tmp.html(tmp.html().replace(/{{ text }}/g,cat.name).replace(/{{ total }}/g,cat.total));
+			   }
+                    );
+        table= $(table).append(tmp);
+
+    });
+    var tmp = '<tr style="font-weight:bold"></tr>';
+    tmp = $(tmp).load("templates/summaryCategoryTemplateNew.html",
+                       function(){
+                         tmp.html(tmp.html().replace(/{{ text }}/g,"TOTAL:").replace(/{{ total }}/g,total));
+                      });
+     table=$(table).append(tmp);
+    $("#summaryPage").append(table);
+}
+
+/*
+ * Budget Page Setup
+ */
+function refreshBudgetPage(){
+    $("#budgetMain").empty();
+    var tmp = '<table><tr><th>Account</th> <th>Total</th> <th>Amount</th> <th>Percentage</th></tr></table>';
+    var amtTotal = 0;
+    var percTotal = 0;
+
+    $.each(_subcatFull, function(){
+            var sc = this;
+            var amt = sc.amt;
+            var perc = sc.perc;
+            var id = sc.name.replace(/ /g,"_");
+            var total = sc.total;
+            var cat = sc.parent.replace(/ /g,"_");
+            var sub = '<tr class="'+cat+'"></tr>';
+            
+            if ( amt != "")
+               amtTotal += parseFloat(amt);
+            if (perc != "" && sc.name != "Tithes")
+               percTotal += parseFloat(perc);
+      
+            sub = $(sub).load("templates/subcategoriesTemplate.html"
+                             , function(){
+                                sub.html(sub.html().replace(/{{ name }}/g, sc.name).replace(/{{ amt }}/g,amt).replace(/{{ perc }}/g,perc).replace(/{{ id }}/g,id).replace(/{{ total }}/g,total));
+                                  sub.find("input").blur(budgetChange);
+                              });
+            tmp = $(tmp).append(sub);
+    });
+
+      $("#budgetMain").append(tmp);
+      $("#budgetAmtTotal").val(amtTotal);
+      $("#budgetPercTotal").val(percTotal);
+      if ( $("#budgetPercTotal").val() > 100)
+          $("#budgetPercTotal").addClass("red");
+      else
+           $("#budgetPercTotal").removeClass("red");
+
+
+      $.each(_catTotals,function(){
+          var cat = this.name.replace(/ /g,"_");
+          var lab = "<label><b>"+cat.replace(/_/g," ")+"</b></label>";
+          $(lab).insertBefore($("#budgetMain").find("tr."+cat).first());    
+
+      });
+}
+/*
+ * Paycheck Page setup
+ */
+
+function refreshPaycheckPage(){
+    $("#paycheckMain").empty();   
+    $("#paycheckTotal").val("");
+         var tmp = '<table><tr><th>Account</th><th>Total</th><th>Amount</th></tr></table>';
+
+     $.each(_subcatFull, function(){
+             var sc = this;
+             var amt = sc.amt;
+             var perc = sc.perc;
+             var id = sc.name.replace(/[\/'\(\) ]/g,"_");
+             var total = sc.total;
+             var cat = sc.parent;
+             var sub = '<tr class="'+cat+'"></tr>';
+
+             sub = $(sub).load("templates/paycheckTemplate.html"
+                              , function(){
+                                 sub.html(sub.html().replace(/{{ name }}/g, sc.name).replace(/{{ id }}/g,id).replace(/{{ total }}/g,total));
+                                   sub.find("input").blur(paycheckChange);
+                               });
+             tmp = $(tmp).append(sub);
+       });
+
+       $("#paycheckMain").append(tmp);
+
+       $.each(_catTotals,function(){
+           var cat = this.name;
+           var lab = "<label><b>"+cat+"</b></label>";
+           $(lab).insertBefore($("#paycheckMain").find("tr."+cat).first());    
+
+       });
+
+}
+
+/*
+ * Start Method
+ */
+function start(){
+/*   $.ajax({ type: "POST"
+          , url: "php/getCategories.php"
+          , success: function(data){
+	       _categories = data.split("\n");
+	       _categories = _categories.slice(0,_categories.length -1);
+               handleCategories(_categories);
+            }
+   });
+ */
+  refreshCategories();
+  refreshSubcategories();
+  $(function(){
+     $("#main").tabs();
+  });
+  $("#paycheckIncome").keyup(function(event){if (event.keyCode == 13) $("#paycheckEnterButton").click();});
+  
+}
+
+window.onload=function(){start();};
+</script>
+<body>
+   <div id="main">
+     <ul>
+       <li><a href="#summaryPage">Summary</a></li>
+       <li><a href="#budget">Budget</a></li>
+       <li><a href="#paycheckPage">Update</a></li>
+       <li><a href="#transactionPage">History</a></li>
+     </ul>     
+     <div id="summaryPage">
+        
+     </div>
+
+     <div id="budget">
+       <div id="budgetMain">
+       </div>
+       <div>
+          <label style="padding-right:214px;">Totals</label>
+          <input id="budgetAmtTotal" type="number" val="0" style="width: 100px"/>
+          <input id="budgetPercTotal" type="number" val="0" style="width: 100px"/>
+          <button id="budgetSave" onclick="budgetSave()">Save</button>
+       </div>
+     </div>
+
+     <div id="paycheckPage">
+        <div>
+           <label>Income: </label>
+           <input id="paycheckIncome" type="number" style="width: 150px;" min=0;/>
+           <button id="paycheckEnterButton"onclick="paycheckEnter()">Enter</button>
+        </div>
+        <div id="paycheckMain"></div>
+        <div>
+           <label>Remainder</label>
+           <input id="paycheckTotal" type="number" value="0" style="width:100px;"/>
+           <button id="paycheckSave" onclick="paycheckSave()">Update</button>
+        </div>
+     </div>
+     <div id="transactionPage">
+        <div>
+            <select id="transactionMonth" onchange="transactionChange()">
+              <option>Select Month...</option>
+              <option value="01">January</option>
+              <option value="02">February</option>
+              <option value="03">March</option>
+              <option value="04">April</option>
+              <option value="05">May</option>
+              <option value="06">June</option>
+              <option value="07">July</option>
+              <option value="08">August</option>
+              <option value="09">September</option>
+              <option value="10">October</option>
+              <option value="11">November</option>
+              <option value="12">December</option>
+            </select>
+        </div>
+        <div id="transactionMain"></div> 
+     </div>
+   </div>
+
+
+</body>
+</html>

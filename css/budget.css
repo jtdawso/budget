@@ -1,0 +1,19 @@
+#budgetSave, #paycheckSave{
+   position:absolute;
+   right: 15px;
+   bottom: 15px;
+}
+
+input{
+  text-align : center;
+}
+.changed{
+  color:blue;
+}
+.red{
+  color:red;
+}
+#transactionTable thead{
+  background-color: cornflowerblue;
+  cursor:pointer;
+}

@@ -1,0 +1,5 @@
+AuthType Basic
+AuthName "My Protected Area"
+AuthUserFile /home/jdawson/public_html/budget/.htpasswd
+Require valid-user
+
